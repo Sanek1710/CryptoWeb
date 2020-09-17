@@ -57,7 +57,7 @@ def tree(uid):
 def not_exists(uid, filename, ftype = None):
     if not cursor: return None
     fpath, fname = os.path.split(filename)
-    postgres_select_query = "SELECT _id FROM file_db "\
+    postgres_select_query = "SELECT _uid FROM file_db "\
                             "WHERE file_db._uid = %s AND file_db._path = %s AND file_db._name = %s "
     if ftype:
         postgres_select_query += "AND file_db._type = %s"
@@ -83,7 +83,7 @@ def mkroot(uid):
         return False
     os.mkdir(STORAGE_PATH + str(uid))
     postgres_insert_query = "INSERT INTO file_db (_uid, _name, _type, _path) VALUES (%s,%s,%s,%s)"
-    record_to_insert = (uid, '/', 'd', None)
+    record_to_insert = (uid, '/', 'd', '')
     cursor.execute(postgres_insert_query, record_to_insert)
     conn.commit()
     tmpprint('make root dir:', uid, ':')
