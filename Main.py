@@ -19,6 +19,9 @@ def __main__():
                             password='12345', host='localhost'):
         return False
 
+    res = CryptoWeb.ls(uid1, '/dir1/dir2')
+    print(res)
+
     #create root dir for user uid1
     CryptoWeb.mkroot(uid1)
 

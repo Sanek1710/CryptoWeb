@@ -26,6 +26,15 @@ def tmpprint(*args):
     return
 tmpprint = print
 
+def ls(uid, dirpath):
+    if not cursor: return None
+    postgres_select_query = "SELECT _name, _type FROM file_db "\
+                            "WHERE file_db._uid = %s AND file_db._path = %s "\
+                            "ORDER BY _name"
+    record_to_select = (uid, dirpath)
+    cursor.execute(postgres_select_query, record_to_select)
+    return { fname : ftype for fname, ftype in cursor }
+
 def tree(uid):
     if not cursor: return None
     postgres_select_query = "SELECT _name, _type, _path FROM file_db "\
@@ -234,10 +243,11 @@ def remove(uid, key, filename):
     conn.commit()
     return True
 
-def download_folder(uid, key, path, name):
+def download_folder(uid, key, dirpath):
     if not cursor: return None
-    postgres_select_query = "SELECT _path, _name, _type FROM file_db WHERE file_db._path like CONCAT(%s, \'%%\') AND file_db._uid = %s"
-    record_to_select = (path + name + '/', uid)
+    postgres_select_query = "SELECT _path, _name, _type FROM file_db "\
+                            "WHERE file_db._path like CONCAT(%s, \'%%\') AND file_db._uid = %s"
+    record_to_select = (dirpath + '/', uid)
     cursor.execute(postgres_select_query, record_to_select)
     tree = cursor.fetchall()
     print('download_folder', tree)
