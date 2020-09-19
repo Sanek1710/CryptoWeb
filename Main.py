@@ -59,8 +59,8 @@ def __main__():
         return False
     clear_db()
     create_db()
-    data = CryptoWeb.download(uid2, key2, '/d1')
-    open('d1.zip', 'wb').write(data)
+    data = CryptoWeb.download(uid2, key2, '/d1/d1_1')
+    open('d1_1.zip', 'wb').write(data)
 
 
 

@@ -271,15 +271,22 @@ def download_folder(uid, key, dirpath):
     tmpprint(load_folder)
     os.makedirs(load_folder, exist_ok=True)
 
+    if dirpath == '/':
+        dirpath = ''
+    path_offset = len(dirpath) if dirpath != '/' else 0
+    print('@@@@', dirpath)
+    print('@@@+', path_offset)
+
     for fpath, fname, ftype in cursor.fetchall():
         if ftype == 'd':
-            dr = os.path.join(fpath, fname)
+            print('@@@@', dirpath)
+            dr = os.path.join(fpath[path_offset:], fname)
             tmpprint('  foldering:', uid, dr)
             os.makedirs(temp_folder + dr, exist_ok=True)
         else:
             fdata = download(uid, key, fpath + '/' + fname)
             if fdata:
-                dr = os.path.join(fpath, fname)
+                dr = os.path.join(fpath[path_offset:], fname)
                 tmpf = open(temp_folder + dr, 'wb')
                 tmpf.write(fdata)
                 tmpf.close()
