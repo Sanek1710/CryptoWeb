@@ -2,7 +2,9 @@ from Cryptodome.Random import get_random_bytes
 from Cryptodome.Cipher import AES
 from Cryptodome.Hash import SHA256
 import psycopg2
+import shutil
 import zipfile
+import tempfile
 import os.path
 import os
 
@@ -10,6 +12,10 @@ cursor = None
 conn = None
 #Path to main storage dir
 STORAGE_PATH = None
+
+def tmpprint(*args):
+    return
+tmpprint = print
 
 def connect(dbname, user, password, host):
     global cursor, conn
@@ -22,9 +28,7 @@ def connect(dbname, user, password, host):
         return False
     return True
 
-def tmpprint(*args):
-    return
-tmpprint = print
+
 
 def ls(uid, dirpath):
     if not cursor: return None
@@ -33,7 +37,9 @@ def ls(uid, dirpath):
                             "ORDER BY _name"
     record_to_select = (uid, dirpath)
     cursor.execute(postgres_select_query, record_to_select)
-    return { fname : ftype for fname, ftype in cursor }
+    return dict(cursor)
+
+
 
 def tree(uid):
     if not cursor: return None
@@ -45,7 +51,7 @@ def tree(uid):
 
     result_tree = { '/': {} }
 
-    for (fname, ftype, fpath) in cursor:
+    for (fname, ftype, fpath) in cursor.fetchall():
         fpath, tmp_dir = os.path.split(fpath)
         path_list = []
         while tmp_dir:
@@ -63,6 +69,8 @@ def tree(uid):
             result_sub_tree[fname] = 'file'
     return result_tree
 
+
+
 def not_exists(uid, filename, ftype = None):
     if not cursor: return None
     fpath, fname = os.path.split(filename)
@@ -77,12 +85,30 @@ def not_exists(uid, filename, ftype = None):
     tmpprint('not_exists:', uid, fpath, fname, ':', ftype)
     return not cursor.fetchone()
 
+
+
+def object_info(uid, filename):
+    if not cursor: return None
+    fpath, fname = os.path.split(filename)
+    postgres_select_query = "SELECT _uid, _path, _name, _type FROM file_db "\
+                            "WHERE file_db._uid = %s AND file_db._path = %s AND file_db._name = %s "
+    record_to_select = (uid, fpath, fname)
+    cursor.execute(postgres_select_query, record_to_select)
+    rec = cursor.fetchone()
+    if not rec:
+        return None
+    return { 'uid': rec[0], 'path': rec[1], 'name': rec[2], 'type': rec[3] }
+
+
+
 def uploaded(uid, filename): #(uid, fpath, fname)
     #filename = fpath + fname
     part_name = str(SHA256.new(bytes(str(uid) + filename, 'utf-8')).hexdigest())
     tmpprint('check uploaded:', uid, filename, ':')
-    tmpprint('  [vv]', os.path.exists(STORAGE_PATH + str(uid) + '/' + part_name))
+    #tmpprint('  [vv]', os.path.exists(STORAGE_PATH + str(uid) + '/' + part_name))
     return os.path.exists(STORAGE_PATH + str(uid) + '/' + part_name)
+
+
 
 def mkroot(uid):
     if not cursor: return None
@@ -98,6 +124,26 @@ def mkroot(uid):
     tmpprint('make root dir:', uid, ':')
     tmpprint('  created')
     return True
+
+def rmroot(uid):
+    if not cursor: return None
+    if not os.path.exists(STORAGE_PATH + str(uid)):
+        tmpprint('rm root dir:', uid, ':')
+        tmpprint('  not exists')
+        return False
+    shutil.rmtree(STORAGE_PATH + str(uid), True)
+
+    postgres_insert_query = "DELETE FROM file_db "\
+                            "WHERE file_db._uid = %s "
+    record_to_insert = tuple([uid])
+    cursor.execute(postgres_insert_query, record_to_insert)
+    conn.commit()
+
+    tmpprint('rm root dir:', uid, ':')
+    tmpprint('  success')
+    return True
+
+
 
 def mkdir(uid, dirpath):
     if not cursor: return None
@@ -119,12 +165,14 @@ def mkdir(uid, dirpath):
     return False
     pass
 
+
+
 def upload(uid, key, filename, fdata): #(uid, key, fpath, fname)
     if not cursor: return None
     
     #filename = fpath + fname
 
-    tmpprint('storing:', uid, '/', filename, ':')
+    tmpprint('storing:', uid, filename, ':')
 
     iv = b'\xb7\xf8\xce\x15\x49\x24\x2b\xa1\xba\x9b\xc8\x67\x15\xc5\x37\x98'
     aes = AES.new(key, AES.MODE_EAX, iv)
@@ -142,7 +190,7 @@ def upload(uid, key, filename, fdata): #(uid, key, fpath, fname)
     BYTES_IN_PART = size // part_count
 
     for i in range(0, part_count):
-        tmpprint('  [->]:', part_name)
+        #tmpprint('  [->]:', part_name)
 
         data, fdata = fdata[0:BYTES_IN_PART], fdata[BYTES_IN_PART:]
         part_file = open(STORAGE_PATH + str(uid) + '/' + part_name, 'wb')
@@ -169,8 +217,10 @@ def upload(uid, key, filename, fdata): #(uid, key, fpath, fname)
     conn.commit()
     return True
 
-def download(uid, key, filename) -> bytes:
-    tmpprint('downloading:', str(uid), '/', filename, ':')
+
+
+def download_file(uid, key, filename) -> bytes:
+    tmpprint('downloading:', str(uid), filename, ':')
 
     iv = b'\xb7\xf8\xce\x15\x49\x24\x2b\xa1\xba\x9b\xc8\x67\x15\xc5\x37\x98'
     aes = AES.new(key, AES.MODE_EAX, iv)
@@ -185,7 +235,7 @@ def download(uid, key, filename) -> bytes:
     fdata = b''
 
     while(True):
-        tmpprint('  [<-]:', part_name)
+        #tmpprint('  [<-]:', part_name)
 
         try:
             part_file = open(STORAGE_PATH + str(uid) + '/' + part_name, 'rb')
@@ -207,9 +257,57 @@ def download(uid, key, filename) -> bytes:
 
     return fdata
 
-def remove(uid, key, filename):
+def download_folder(uid, key, dirpath):
     if not cursor: return None
-    tmpprint('rmoving:', str(uid), '/', filename, ':')
+    postgres_select_query = "SELECT _path, _name, _type FROM file_db "\
+                            "WHERE file_db._path like CONCAT(%s, \'%%\') AND file_db._uid = %s "\
+                            "ORDER BY _path"
+    record_to_select = (dirpath, uid)
+    cursor.execute(postgres_select_query, record_to_select)
+    
+    temp_folder = os.path.join(STORAGE_PATH, '~' + str(uid))
+    dirpath, dirname = os.path.split(dirpath)
+    load_folder = os.path.join(temp_folder, dirname)
+    tmpprint(load_folder)
+    os.makedirs(load_folder, exist_ok=True)
+
+    for fpath, fname, ftype in cursor.fetchall():
+        if ftype == 'd':
+            dr = os.path.join(fpath, fname)
+            tmpprint('  foldering:', uid, dr)
+            os.makedirs(temp_folder + dr, exist_ok=True)
+        else:
+            fdata = download(uid, key, fpath + '/' + fname)
+            if fdata:
+                dr = os.path.join(fpath, fname)
+                tmpf = open(temp_folder + dr, 'wb')
+                tmpf.write(fdata)
+                tmpf.close()
+    
+    shutil.make_archive(load_folder, 'zip', temp_folder, dirname)
+    zip_file = open(load_folder + '.zip', 'rb')
+    zip_data = zip_file.read()
+    zip_file.close()
+    shutil.rmtree(temp_folder, True)
+
+
+    return zip_data
+
+def download(uid, key, filename) -> bytes:
+    finfo = object_info(uid, filename)
+    if not finfo: 
+        return None
+
+    if finfo['type'] == 'f':
+        return download_file(uid, key, filename)
+    else:
+        return download_folder(uid, key, filename)
+
+
+
+def remove_file(uid, key, filename):
+    if not cursor: return None
+    tmpprint('rmoving:', str(uid), filename, ':')
 
     iv = b'\xb7\xf8\xce\x15\x49\x24\x2b\xa1\xba\x9b\xc8\x67\x15\xc5\x37\x98'
     aes = AES.new(key, AES.MODE_EAX, iv)
@@ -220,11 +318,10 @@ def remove(uid, key, filename):
     if (not os.path.exists(STORAGE_PATH + str(uid) + '/' + part_name)):
         tmpprint(' ', str(uid) + filename, 'No such file')
         return False
-    BLOCK_SIZE = os.path.getsize(STORAGE_PATH + str(uid) + '/' + part_name)
+    #BLOCK_SIZE = os.path.getsize(STORAGE_PATH + str(uid) + '/' + part_name)
 
     while True:
-        tmpprint('  [XX]:', part_name)
-
+        #tmpprint('  [XX]:', part_name)
         part_file = open(STORAGE_PATH + str(uid) + '/' + part_name, 'rb')
         data = part_file.read()
         part_file.close()
@@ -236,67 +333,54 @@ def remove(uid, key, filename):
         part_name = part_index.hex()
 
     postgres_insert_query = "DELETE FROM file_db "\
-                            "WHERE file_db._uid = %s AND file_db._name = %s AND file_db._path = %s"
+                            "WHERE file_db._uid = %s "\
+                                "AND file_db._name = %s "\
+                                "AND file_db._path = %s"
     fpath, fname = os.path.split(filename) 
     record_to_insert = (uid, fname, fpath)
     cursor.execute(postgres_insert_query, record_to_insert)
     conn.commit()
     return True
 
-def download_folder(uid, key, dirpath):
+def remove_folder(uid, key, dirname):
     if not cursor: return None
     postgres_select_query = "SELECT _path, _name, _type FROM file_db "\
-                            "WHERE file_db._path like CONCAT(%s, \'%%\') AND file_db._uid = %s"
-    record_to_select = (dirpath + '/', uid)
+                            "WHERE file_db._uid = %s "\
+                                "AND file_db._path like CONCAT(%s, \'%%\') "\
+                            "ORDER BY _path"
+    record_to_select = (uid, dirname)
     cursor.execute(postgres_select_query, record_to_select)
-    tree = cursor.fetchall()
-    print('download_folder', tree)
-    
-    main_folder = '---loaded---'
-    for sub in tree:
-        if not os.path.exists(main_folder + sub[0]):
-            os.makedirs(main_folder + sub[0])
-        if (sub[2] == 'f'):
-            if not download(uid, key, sub[0], sub[1]):
-                return False
-        elif not os.path.exists(main_folder + sub[0] + sub[1]):
-            os.mkdir(main_folder + sub[0] + sub[1])
-    
-    if os.path.exists(main_folder + '.zip'):
-        os.remove(main_folder + '.zip')
 
-    arch = zipfile.ZipFile(main_folder + '.zip', 'w', zipfile.ZIP_DEFLATED)
-    tmpprint('download_folder:', str(uid), '/', path + name, ':')
-
-    tmpprint('  [<-]:', main_folder + '.zip')
-    for root, dirs, files in os.walk(main_folder):
-        print(root, dirs, files)
-        for tarfile in dirs + files:
-            if tarfile != '':
-                arch.write(root + '/' + tarfile)
-    arch.close()
-    return True
-
-
-def remove_folder(uid, key, path, name):
-    if not cursor: return None
-    postgres_select_query = "SELECT _path, _name, _type FROM file_db WHERE file_db._path like CONCAT(%s, \'%%\') AND file_db._uid = %s"
-    record_to_select = (path + name + '/', uid)
-    cursor.execute(postgres_select_query, record_to_select)
-    tree = cursor.fetchall()
-    print('remove_folder', tree)
-
-    for sub in tree:
-        if (sub[2] == 'd'):
-            postgres_insert_query = "DELETE FROM file_db WHERE file_db._name = %s AND file_db._path = %s AND file_db._uid = %s"
-            record_to_insert = (sub[1], sub[0], uid)
-            cursor.execute(postgres_insert_query, record_to_insert)
+    for fpath, fname, ftype in cursor.fetchall():
+        if (ftype == 'f'):
+            remove_file(uid, key, fpath + '/' + fname)
+        else: #remove directory
+            tmpprint('rmoving:', uid, fpath + '/' + fname, ':d')
+            postgres_delete_query = "DELETE FROM file_db "\
+                                    "WHERE file_db._uid = %s "\
+                                        "AND file_db._name = %s "\
+                                        "AND file_db._path = %s "
+            record_to_delete = (uid, fname, fpath)
+            cursor.execute(postgres_delete_query, record_to_delete)
             conn.commit()
-        else :
-            remove(uid, key, sub[0], sub[1])
-    
-    postgres_insert_query = "DELETE FROM file_db WHERE file_db._name = %s AND file_db._path = %s AND file_db._uid = %s"
-    record_to_insert = (name, path, uid)
-    cursor.execute(postgres_insert_query, record_to_insert)
+
+    postgres_delete_query = "DELETE FROM file_db "\
+                            "WHERE file_db._uid = %s "\
+                                "AND file_db._name = %s "\
+                                "AND file_db._path = %s "
+    fpath, fname = os.path.split(dirname)
+    record_to_delete = (uid, fname, fpath)
+    cursor.execute(postgres_delete_query, record_to_delete)
     conn.commit()
     return True
+
+def remove(uid, key, filename) -> bytes:
+    finfo = object_info(uid, filename)
+    if not finfo: 
+        tmpprint('remove(', uid, filename, '): no such object')
+        return None
+
+    if finfo['type'] == 'f':
+        return remove_file(uid, key, filename)
+    else:
+        return remove_folder(uid, key, filename)
