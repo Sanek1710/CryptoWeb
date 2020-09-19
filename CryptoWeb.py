@@ -274,12 +274,9 @@ def download_folder(uid, key, dirpath):
     if dirpath == '/':
         dirpath = ''
     path_offset = len(dirpath) if dirpath != '/' else 0
-    print('@@@@', dirpath)
-    print('@@@+', path_offset)
 
     for fpath, fname, ftype in cursor.fetchall():
         if ftype == 'd':
-            print('@@@@', dirpath)
             dr = os.path.join(fpath[path_offset:], fname)
             tmpprint('  foldering:', uid, dr)
             os.makedirs(temp_folder + dr, exist_ok=True)
